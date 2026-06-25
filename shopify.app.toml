@@ -1,0 +1,48 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "4e8f77c62fe6f11e68669017a01fc50b"
+application_url = "https://example.com"
+embedded = true
+name = "share-cart-app"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "write_app_proxy,write_products,write_metaobjects,write_metaobject_definitions,read_metaobjects"
+
+# NOTE: the `share_cart` metaobject definition is NOT declared here on purpose.
+# It already exists in the store as a merchant-owned definition (type "share_cart"),
+# which is exactly what apps.cart-share.*.jsx target via METAOBJECT_TYPE = "share_cart".
+# Declaring it under [metaobjects.app.*] would create a SEPARATE app-owned type
+# ("app--<id>--share_cart") that the code does not use. If you later want the app to
+# own/auto-create the definition on install, switch the code's METAOBJECT_TYPE to the
+# app-reserved type at the same time.
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+[auth]
+redirect_urls = [ "https://example.com/api/auth" ]
+
+[build]
+include_config_on_deploy = true
+automatically_update_urls_on_dev = true
+
+# IMPORTANT: use an ABSOLUTE url that ENDS IN /apps/cart-share.
+# A relative url ("/apps/cart-share") gets resolved to just the host (path dropped),
+# so Shopify forwarded /apps/cart-share/create -> {app}/create -> 404.
+# With an absolute url, `automatically_update_urls_on_dev` swaps only the HOST on each
+# `shopify app dev` run and KEEPS the /apps/cart-share path, so:
+#   storefront  /apps/cart-share/create   ->  {app}/apps/cart-share/create   (route apps.cart-share.create)
+#   storefront  /apps/cart-share/<token>  ->  {app}/apps/cart-share/<token>  (route apps.cart-share.$token)
+[app_proxy]
+url = "https://consumer-soup-lawsuit-dated.trycloudflare.com/apps/cart-share"
+subpath = "cart-share"
+prefix = "apps"
