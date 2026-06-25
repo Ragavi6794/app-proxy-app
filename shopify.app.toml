@@ -31,10 +31,6 @@ api_version = "2026-07"
 [auth]
 redirect_urls = [ "https://app-proxy-app.onrender.com/auth/callback" ]
 
-[build]
-include_config_on_deploy = true
-automatically_update_urls_on_dev = true
-
 # IMPORTANT: use an ABSOLUTE url that ENDS IN /apps/cart-share.
 # A relative url ("/apps/cart-share") gets resolved to just the host (path dropped),
 # so Shopify forwarded /apps/cart-share/create -> {app}/create -> 404.
@@ -46,3 +42,6 @@ automatically_update_urls_on_dev = true
 url = "https://app-proxy-app.onrender.com/apps/cart-share"
 subpath = "cart-share"
 prefix = "apps"
+
+[build]
+automatically_update_urls_on_dev = true

@@ -171,6 +171,14 @@ export const loader = async ({ request, params }) => {
           statusEl.className = "status" + (isError ? " error" : "");
         }
 
+        function addJson(body) {
+          return fetch("/cart/add.js", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify(body)
+          });
+        }
+
         async function restoreAndGo() {
           btn.disabled = true;
           setStatus("Restoring cart…", false);
@@ -179,16 +187,27 @@ export const loader = async ({ request, params }) => {
             if (REPLACE_CART) {
               await fetch("/cart/clear.js", { method: "POST", headers: { "Content-Type": "application/json" } });
             }
-            var res = await fetch("/cart/add.js", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ items: addItems })
-            });
-            if (!res.ok) {
-              var err = await res.json().catch(function () { return {}; });
-              throw new Error(err.description || "Some items could not be added.");
+            // /cart/add.js is atomic: if ANY line is unavailable Shopify adds NONE
+            // (422). Fall back to adding items one at a time so available items
+            // still land (bundles/out-of-stock components don't block the rest).
+            var added = 0;
+            var res = await addJson({ items: addItems });
+            if (res.ok) {
+              added = addItems.length;
+            } else {
+              for (var i = 0; i < addItems.length; i++) {
+                var r = await addJson({ items: [addItems[i]] });
+                if (r.ok) added++;
+              }
             }
-            setStatus("Done! Redirecting to your cart…", false);
+            if (added === 0) {
+              setStatus("None of the shared items are available right now.", true);
+              btn.disabled = false;
+              return;
+            }
+            setStatus(added < addItems.length
+              ? "Some items were unavailable; added the rest. Redirecting…"
+              : "Done! Redirecting to your cart…", false);
             window.location.href = "/cart";
           } catch (e) {
             setStatus(e.message || "Could not restore the cart.", true);
