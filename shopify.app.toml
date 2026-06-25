@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "4e8f77c62fe6f11e68669017a01fc50b"
-application_url = "https://example.com"
+application_url = "https://app-proxy-app.onrender.com"
 embedded = true
 name = "share-cart-app"
 
@@ -29,7 +29,7 @@ api_version = "2026-07"
   topics = [ "app/scopes_update" ]
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://app-proxy-app.onrender.com/auth/callback" ]
 
 [build]
 include_config_on_deploy = true
@@ -43,6 +43,6 @@ automatically_update_urls_on_dev = true
 #   storefront  /apps/cart-share/create   ->  {app}/apps/cart-share/create   (route apps.cart-share.create)
 #   storefront  /apps/cart-share/<token>  ->  {app}/apps/cart-share/<token>  (route apps.cart-share.$token)
 [app_proxy]
-url = "https://consumer-soup-lawsuit-dated.trycloudflare.com/apps/cart-share"
+url = "https://app-proxy-app.onrender.com/apps/cart-share"
 subpath = "cart-share"
 prefix = "apps"
