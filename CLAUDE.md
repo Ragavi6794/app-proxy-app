@@ -62,7 +62,8 @@ There is no test runner configured. Always run via the **Shopify CLI** (`npm run
 ## Conventions & gotchas
 
 - **API version is set in two places** and they currently differ: `shopify.server.js` uses `ApiVersion.October25` (also used by `.graphqlrc.js` codegen) while `shopify.app.toml` `[webhooks]` declares `api_version = "2026-07"`. Keep the GraphQL/Admin version (`shopify.server.js` + `.graphqlrc.js`) in sync when bumping.
-- **Scopes** live in `shopify.app.toml` `[access_scopes]` (`write_app_proxy,write_products,write_metaobjects,write_metaobject_definitions,read_metaobjects`) and are loaded via `process.env.SCOPES`. `write_app_proxy` is required to configure the proxy. Changing scopes requires a redeploy/reinstall.
+- **Scopes** live in `shopify.app.toml` `[access_scopes]` (`write_app_proxy,write_products,write_metaobjects,write_metaobject_definitions,read_metaobjects`) and are loaded via `process.env.SCOPES`. `write_app_proxy` is required to configure the proxy. 
+ scopes requires a redeploy/reinstall.
 - **Production session-store gotcha**: `prisma/schema.prisma` uses **SQLite**, but Render's filesystem is **ephemeral** — the session DB (and the shop's offline token) is lost on each restart/deploy, after which `appProxy` returns `admin: undefined` and share-link creation 403s until the app is re-opened in admin. For a stable deploy, switch the Prisma provider to **PostgreSQL** with a persistent `DATABASE_URL`.
 - **Declarative config**: product metafield + metaobject *definitions* are declared in `shopify.app.toml` and applied on deploy — don't create those definitions imperatively.
 - After editing `prisma/schema.prisma`, run `npm run setup`. After changing GraphQL queries, run `npm run graphql-codegen`.
