@@ -43,9 +43,40 @@ export const action = async ({ request }) => {
   }
 
   // Verifies the App Proxy HMAC signature (throws 401 if invalid).
-  const { admin } = await authenticate.public.appProxy(request);
+  // `admin`/`session` are only present when an OFFLINE session exists for the
+  // shop in the session store. If the session store was wiped (e.g. ephemeral
+  // SQLite on Render after a restart), these are undefined even though the
+  // HMAC is valid — i.e. it's a missing-session problem, NOT an uninstalled app.
+  const { admin, session } = await authenticate.public.appProxy(request);
+
+  const url = new URL(request.url);
+  console.log("[share-cart/create] appProxy auth result", {
+    shop: url.searchParams.get("shop"),
+    loggedInCustomerId: url.searchParams.get("logged_in_customer_id"),
+    hasAdmin: Boolean(admin),
+    hasSession: Boolean(session),
+    sessionShop: session?.shop ?? null,
+    sessionId: session?.id ?? null,
+    sessionScope: session?.scope ?? null,
+    isOnline: session?.isOnline ?? null,
+  });
+
   if (!admin) {
-    return json({ ok: false, error: "App is not installed on this shop." }, { status: 403 });
+    // No offline session for this shop. Usually the session store lost it
+    // (ephemeral DB) — the merchant must open the app once to re-create it.
+    console.warn(
+      "[share-cart/create] No offline session found for shop",
+      url.searchParams.get("shop"),
+      "— session store may have been cleared. Re-open the app in admin to re-authenticate.",
+    );
+    return json(
+      {
+        ok: false,
+        error: "Cart sharing is temporarily unavailable. Please try again shortly.",
+        code: "NO_OFFLINE_SESSION",
+      },
+      { status: 503 },
+    );
   }
 
   let payload;
