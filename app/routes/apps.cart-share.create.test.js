@@ -33,10 +33,11 @@ describe("POST /apps/cart-share/create", () => {
     expect(res.status).toBe(405);
   });
 
-  it("returns 403 when the app is not installed (admin undefined)", async () => {
+  it("returns 503 NO_OFFLINE_SESSION when there is no offline session (admin undefined)", async () => {
     const { status, body } = await run(postRequest({ items: [{ variantId: 1, quantity: 1 }] }), undefined);
-    expect(status).toBe(403);
+    expect(status).toBe(503);
     expect(body.ok).toBe(false);
+    expect(body.code).toBe("NO_OFFLINE_SESSION");
   });
 
   it("returns 400 on invalid JSON body", async () => {

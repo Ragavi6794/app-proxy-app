@@ -22,8 +22,15 @@ Implement a configurable Share Cart that lets a merchant:
 Use a native **Shopify cart permalink** (variant IDs + quantities):
 
 ```
-https://store.com/cart/123456789:2,987654321:1
+https://store.com/cart/123456789:2,987654321:1?storefront=true
 ```
+
+> ⚠️ The **`?storefront=true`** suffix is required — a *bare* permalink redirects straight to
+> checkout. With the suffix, the recipient lands on the **cart page** to review items first.
+>
+> **Scenario 1 shares ONLY variant IDs + quantities.** Delivery address, line-item properties,
+> selling plans/subscriptions, cart note & attributes, and bundle keys are **NOT** carried by a
+> permalink — use Scenario 2 when any of those must be preserved.
 
 ### Scenario 2 — Share enabled, address sharing ON
 Cart permalinks can't carry an address, so use a **token‑based URL**. The cart + address are
@@ -213,7 +220,11 @@ export const loader = async ({ request, params }) => {
 - **Per‑item fallback:** `/cart/add.js` is *atomic* — if any line is unavailable Shopify adds none
   (422). So it tries all items at once, and on failure retries **one item at a time** so available
   items still land. Shows "Some items were unavailable; added the rest" or "None available".
+- **Note & attributes:** restored via **`/cart/update.js`** after the items are added.
 - Renders the **delivery address** for confirmation + a **"Continue to cart"** button → `/cart`.
+
+> **Address modal required fields:** First Name, Address Line 1, City, ZIP. Optional: Last Name,
+> Province, Country, Phone. (`share-cart.js` trims and drops empty optional fields before POSTing.)
 
 ### 4.5 Authentication — `authenticate.public.appProxy`
 
@@ -274,7 +285,7 @@ if (!includeAddress) {                                       // Scenario 1: perm
 |---|---|
 | **Invalid token** | `metaobjectByHandle` returns null → "This share link is not valid" (404). |
 | **Expired link** | `expiry_date` ≤ now → "This share link has expired" (410). Default TTL **7 days**. |
-| **App not installed** | `admin` undefined → 403 (create) / message page (open). |
+| **No offline session** | `admin` undefined → **503** `{code:"NO_OFFLINE_SESSION"}` "Cart sharing is temporarily unavailable" (create) / message page (open). Server logs the shop + `hasAdmin/hasSession`. Fix = re-open the app in admin. |
 | **Out‑of‑stock / unavailable item** | Atomic add fails → per‑item fallback adds the rest; partial/none messaging. |
 | **Line item properties / bundles / subscriptions** | `properties` + `selling_plan` preserved through create and restore. |
 | **Replace vs merge** | `cart_data.replace` flag (default = replace via `/cart/clear.js`). |
@@ -285,16 +296,29 @@ if (!includeAddress) {                                       // Scenario 1: perm
 
 ## 7. Deployment
 
-- **Host:** Render Web Service `app-proxy-app.onrender.com` (Docker, `docker-start` → `prisma migrate deploy` + `react-router-serve`).
-- **Released version:** `share-cart-app-5` (proxy URL points to the Render host).
-- **Config push:** `npm run deploy` (`shopify app deploy --allow-updates`) pushes `shopify.app.toml`
-  (scopes + `[app_proxy]`) and releases a new app version.
+- **Host:** Render Web Service `app-proxy-app.onrender.com` (Node, deploys from GitHub `Ragavi6794/app-proxy-app`, branch `main`).
+- **Build command (Render):** `npm install && npx prisma db push && npm run build`
+  — `prisma db push` syncs the schema (creates the `Session` table) in Postgres on every build.
+- **Start command (Render):** `npm run start` (`react-router-serve`). **Do NOT use `npm run docker-start`**
+  here — it runs `prisma migrate deploy`, which conflicts with the `db push` workflow (it would try to
+  re-create the existing `Session` table and crash on boot).
+- **Session store:** **PostgreSQL** (Render Postgres). `prisma/schema.prisma` →
+  `provider = "postgresql"`, `url = env("DATABASE_URL")`. `DATABASE_URL` is set in the web service
+  Environment (Internal URL) and in local `.env` (External URL, `?sslmode=require`).
+- **Shopify config push:** `npm run deploy` (`shopify app deploy --allow-updates`) pushes
+  `shopify.app.toml` (scopes + `[app_proxy]`) and releases a new app version (this is separate from the
+  Render git deploy).
 
-### ⚠️ Known production note — session store
-`prisma/schema.prisma` uses **SQLite** (`file:dev.sqlite`). Render's filesystem is **ephemeral**, so the
-session DB (and the shop's offline token) is lost on each restart/deploy → `appProxy` then returns
-`admin: undefined` → `Generate link` fails with 403 until the app is re‑opened in admin. **Fix for a
-stable deployment: switch the Prisma provider to PostgreSQL** with a persistent `DATABASE_URL`.
+### Post-deploy / first-run requirement
+Token-exchange auth means there is no `/auth` OAuth flow (`/auth` returns `410`). The shop's **offline
+session** is created when the **embedded app is first opened in admin**. After a fresh DB (or a new
+install), open the app once so the `offline_<shop>` row is written to Postgres — otherwise Scenario 2
+returns the 503 "temporarily unavailable" (no offline session).
+
+### ✅ Resolved — session persistence (was: SQLite on ephemeral disk)
+Previously the session store was **SQLite** on Render's **ephemeral** filesystem, so the offline session
+was wiped on every restart/deploy and `Generate link` 403'd intermittently. **Fixed** by moving the
+session store to **PostgreSQL** (persistent). The offline session now survives restarts.
 
 ---
 
@@ -342,7 +366,145 @@ stable deployment: switch the Prisma provider to PostgreSQL** with a persistent 
 | `app/routes/apps.cart-share.create.jsx` | POST → create metaobject, return share URL |
 | `app/routes/apps.cart-share.$token.jsx` | GET → look up by token, validate expiry, restore page |
 | `app/shopify.server.js` | `shopifyApp()` setup; exports `authenticate`, etc. |
-| `prisma/schema.prisma` | Session store (SQLite → Postgres for prod) |
+| `app/routes.js` | `flatRoutes({ ignoredRouteFiles })` — excludes `*.test.js`/test helpers from the build |
+| `prisma/schema.prisma` | Session store — **PostgreSQL** (`provider`, `url = env("DATABASE_URL")`) |
+| `prisma/migrations/**` | Postgres migration + `migration_lock.toml` |
+| `app/routes/__test-helpers__/`, `*.test.js` | Vitest unit tests (run via `npm run test`; excluded from build) |
 | *(theme)* `assets/share-cart.js` | Storefront Scenario 1/2 logic |
 | *(theme)* `snippets/share-cart*.liquid` | CTA + modal |
 | *(theme)* `config/settings_schema.json` | Merchant toggles |
+
+---
+
+## 11. Changelog — latest changes & fixes
+
+**Session store: SQLite → PostgreSQL** (`prisma/schema.prisma`, migration, `migration_lock.toml`)
+- Root cause of the recurring **"App is not installed"** 403: SQLite on Render's ephemeral disk lost the
+  shop's offline session on every restart. Moved to a persistent Render Postgres. `DATABASE_URL` set on
+  the web service (Internal URL) and local `.env` (External URL). Table created by the build's
+  `prisma db push`.
+
+**Clearer error + debug logging** (`app/routes/apps.cart-share.create.jsx`)
+- Replaced the misleading `403 "App is not installed on this shop"` with `503` +
+  `{ code: "NO_OFFLINE_SESSION", error: "Cart sharing is temporarily unavailable…" }`.
+- Added `console.log("[share-cart/create] appProxy auth result", { shop, hasAdmin, hasSession, … })`
+  to diagnose missing-session vs. real failures in Render logs.
+
+**Build fix: exclude test files from the route build** (`app/routes.js`)
+- Vitest test files (`*.test.js`, `__test-helpers__/`) live under `app/routes/`, so `flatRoutes()` treated
+  them as routes and bundled them. They import `vitest` (a devDependency, absent in the prod build) →
+  Render build failed with an unresolved-import `PLUGIN_ERROR`. Fixed via
+  `flatRoutes({ ignoredRouteFiles: ["**/*.test.{js,jsx,ts,tsx}", "**/*.spec.*", "**/__tests__/**", "**/__test-helpers__/**"] })`.
+
+**App-proxy URL hardening** (`shopify.app.toml`)
+- `[app_proxy].url` is **absolute** and ends in `/apps/cart-share` (a relative url dropped the path → 404).
+- Added the required `write_app_proxy` scope.
+
+**Operational note**
+- Keep the Render **Start Command** as `npm run start`; do **not** switch to `npm run docker-start`
+  (`prisma migrate deploy` would clash with the `db push` build step).
+- After a fresh DB/install, **open the app in admin once** to create the `offline_<shop>` session.
+
+---
+
+## 12. Security & PII handling
+
+| Concern | How it's handled |
+|---|---|
+| **PII in URL** | **Never.** Only the opaque 24‑char (128‑bit) token appears in the URL. Name/phone/address live server‑side in the metaobject. |
+| **Request authenticity** | Every proxied request carries Shopify's HMAC signature, verified by `authenticate.public.appProxy` (401 on forgery). |
+| **Transport security** | HTTPS end‑to‑end: Shopify proxy → Render. |
+| **Token expiry** | 7‑day TTL; the `$token` loader rejects expired tokens with **410**. |
+| **PII at rest (optional)** | `address_data` is plaintext JSON in the metaobject (Admin‑visible). For stricter requirements, AES‑256 encrypt it in `create` and decrypt in `$token`. |
+| **Rate limiting (optional)** | Consider rate‑limiting `/create` to prevent token‑spam abuse. |
+
+```
+✅ CORRECT:  /apps/cart-share/212b6d2ec9759ebd53fea15f      (opaque token only)
+❌ WRONG:    /apps/cart-share?name=john&phone=9876543210    (PII in URL)
+```
+
+---
+
+## 13. Environment variables (Render)
+
+| Variable | Secret? | Purpose |
+|---|---|---|
+| `SHOPIFY_API_KEY` | No | App client ID (Partners dashboard). |
+| `SHOPIFY_API_SECRET` | **YES — never commit** | Verifies the App Proxy HMAC signature. Render env only. |
+| `SCOPES` | No | Must match `shopify.app.toml` scopes exactly. |
+| `SHOPIFY_APP_URL` | No | App's public URL on Render. |
+| `DATABASE_URL` | Yes | Prisma session store — **Postgres** in production. |
+| `NODE_ENV` | No | `production` on Render. |
+
+> **🔑 Secret rotation:** keep `SHOPIFY_API_SECRET` only in Render's Environment + a gitignored `.env`.
+> If it's ever exposed (file, chat, screenshot, commit), rotate immediately:
+> **Partners → App → Client Credentials → Rotate secret**, then update only the Render env var.
+
+---
+
+## 14. Development journey — issues & fixes
+
+A record of real problems hit during development (handy for future debugging).
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| `"items array is required"` 422 | Theme sent `{items, shippingAddress}` but route only read `cart_data.items`. | `create` accepts **both** payload shapes. |
+| 404 on `POST /create` | Proxy `url` was relative / didn't end in `/apps/cart-share`. | Absolute `url` ending in `/apps/cart-share`. |
+| 404 after reinstall | Proxy `subpath` only binds on new install. | Uninstall + reinstall the app. |
+| `"Unexpected end of JSON input"` | Proxy hit a backend returning empty (dead tunnel). | Bind proxy to Render; verify `/apps/cart-share/...`. |
+| Two apps claiming same subpath | Old Express app still installed. | Uninstall old app; let this app own the subpath. |
+| `"Translation missing"` on restore | Landing used `application/liquid`; live theme lacked keys. | Return self‑contained `text/html` with strings inlined. |
+| Wrong country on restore | Country hardcoded in theme modal. | Added Country field to the address modal. |
+| `"None available"` in incognito | Store password‑protected; `/cart/add.js` blocked without session. | Enter store password before testing. |
+| Bundles lost on restore | Theme stripped `_`‑prefixed properties. | Keep all properties in `toItems()`. |
+| One OOS item failed everything | `/cart/add.js` is atomic (422 = none added). | Per‑item fallback. |
+| `vitest` build failure (`PLUGIN_ERROR`) | `*.test.js` under `app/routes/` bundled into the build. | `flatRoutes({ ignoredRouteFiles })`. |
+| 403 after Render restart | SQLite session DB wiped (ephemeral disk). | Switch session store to **Postgres**. |
+| Tunnel URL changing every run | `shopify app dev` rotates the tunnel. | Deploy to Render (stable URL). |
+
+---
+
+## 15. QA checklist
+
+**Merchant settings**
+- [ ] Enable Share Cart OFF → no CTA / no JS / no markup on storefront.
+- [ ] "Include Address" hidden in editor unless Share Cart enabled.
+
+**Scenario 1 — permalink**
+- [ ] Address OFF → link is `/cart/{variant}:{qty},…?storefront=true`.
+- [ ] Copy works (Clipboard API + `execCommand` fallback + `navigator.share` on mobile).
+- [ ] Link lands recipient on the **cart page** (not checkout); items/quantities correct.
+
+**Scenario 2 — token URL**
+- [ ] Address ON → modal → Generate Link → URL is `/apps/cart-share/{token}`.
+- [ ] New metaobject visible in Admin → Content → Metaobjects → Share cart (token, cart_data, address_data, expiry 7 days out).
+- [ ] Opening the token URL restores the cart; address shown; "Continue to cart" → `/cart`.
+
+**Error handling**
+- [ ] Invalid token → 404 "not valid". Expired → 410 "expired". Empty cart → blocked (both scenarios).
+
+**Advanced cart features**
+- [ ] Line item properties, bundle (`_`‑keys), selling plan/subscription, note & attributes all preserved.
+- [ ] OOS item → remaining items added + partial notice. Replace‑vs‑merge as configured.
+
+**Cross-platform**
+- [ ] Incognito (store password entered) restores correctly. Mobile multi‑product + `navigator.share`. Non‑Plus store — no plan‑gated APIs.
+
+---
+
+## 16. Automated tests
+
+Two suites exist:
+- **App routes (vitest):** `app/routes/*.test.js` + `app/routes/__test-helpers__/` — unit‑test the
+  `create`/`$token` proxy routes. Run with `npm run test`. **Excluded from the production build** via
+  `flatRoutes({ ignoredRouteFiles })` (they import `vitest`, a devDependency).
+- **Theme (`tests/`, jsdom):** load the real `assets/share-cart.js` in jsdom and drive it end‑to‑end —
+  bootstrap (no‑op without root, single handler), Scenario 1 (permalink + empty‑cart block + Copy),
+  Scenario 2 (modal validation, full payload incl. properties/bundle keys/sellingPlanId/note/attributes/address,
+  token link, empty‑field trimming, backend errors), and i18n fallback.
+  ```bash
+  cd tests && npm install
+  npx jest                  # all suites
+  npx jest share-cart       # Share Cart only
+  npx jest -t "Scenario 2"  # one group
+  ```
